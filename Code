@@ -1,0 +1,244 @@
+import cv2
+import numpy as np
+import face_recognition
+import os
+import csv
+from datetime import datetime, timedelta
+
+
+
+def load_images(path):
+    images = []
+    class_names = []
+    student_ids = {}
+
+    for student_dir in os.listdir(path):
+        student_path = os.path.join(path, student_dir)
+        
+        if os.path.isdir(student_path):
+            student_id_file = os.path.join(student_path, 'student_id.txt')
+            if os.path.isfile(student_id_file):
+                with open(student_id_file, 'r') as f:
+                    student_id = f.read().strip()
+                student_ids[student_dir] = student_id
+
+            for image_file in os.listdir(student_path):
+                image_path = os.path.join(student_path, image_file)
+                
+                if os.path.isfile(image_path) and image_file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')):
+                    cur_img = cv2.imread(image_path)
+                    
+                    if cur_img is not None:
+                        images.append(cur_img)
+                        class_names.append(student_dir)
+
+    return images, class_names, student_ids
+# Example usage
+path = 'C:/Users/atul2/OneDrive/Desktop/Face Recgonition/Student details'
+images, class_names, student_ids = load_images(path)
+print(f"Loaded {len(images)} images from {len(set(class_names))} classes.")
+
+
+
+def find_face_encodings(images):
+    """
+    Find face encodings for a list of images.
+
+    Args:
+        images (list): A list of images (numpy arrays) to be processed.
+
+    Returns:
+        list: A list of face encodings.
+    """
+    encode_list = []
+
+    for img in images:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        encode = face_recognition.face_encodings(img, model="cnn")[0]
+        # encode = face_recognition.face_encodings(img, model="cnn")[0]
+        encode_list.append(encode)
+
+    return encode_list
+
+# Example usage
+face_encodings = find_face_encodings(images)
+print(f"Found {len(face_encodings)} face encodings.")
+
+
+def initialize_attendance_csv(csv_file):
+    """
+    Initialize the attendance CSV file with a header row.
+
+    Args:
+        csv_file (str): The path to the CSV file.
+    """
+    if not os.path.exists(csv_file):
+        with open(csv_file, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["Name", "Student_Id", "Date", "Day of Week", "Time Stamp", "Status", "Alert Message"])
+
+
+
+def mark_attendance(name, csv_dir, student_ids, status, alert_message=None):
+    """
+    Mark attendance for a given name and write to a CSV file.
+
+    Args:
+        name (str): The name of the person to mark attendance for.
+        csv_dir (str): The path to the CSV file directory.
+        student_ids (dict): A dictionary mapping names to student IDs.
+        status (str): The attendance status of the student ("present" or "absent").
+        alert_message (str, optional): An optional alert message to include. Defaults to None.
+    """
+    if name != "Unknown":  # Only mark attendance if the name is not "Unknown"
+        now = datetime.now()  # Define now here
+        if not os.path.exists(csv_dir):
+            os.makedirs(csv_dir)
+
+        initialize_attendance_csv(csv_dir)
+
+        with open(csv_file, 'a', newline='') as f:
+            now = datetime.now()
+            student_id = student_ids.get(name)  # Extract the individual student ID from the dictionary
+            attendance_info = {
+                'name': name,
+                'student_id': student_id,  # Use the individual student ID
+                'date': now.strftime('%Y-%m-%d'),
+                'day_of_week': now.strftime('%A'),
+                'time_stamp': now.strftime('%H:%M:%S'),
+                'status': status,
+                'alert_message': alert_message if alert_message else ''
+            }
+
+            writer = csv.writer(f)
+            writer.writerow(attendance_info.values())
+# Initialize known face encodings
+encodeListKnown = find_face_encodings(images)
+print('Encoding Complete \n ')
+
+# Initialize webcam capture
+cap = cv2.VideoCapture(0)
+
+# Generate a unique CSV file name based on the current timestamp
+csv_dir = 'C:/Users/atul2/OneDrive/Desktop/Face Recgonition/attendance_csv' #new
+csv_file = os.path.join(csv_dir, f'Attendance_Book_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}.csv')
+# Initialize the CSV file with the header row
+initialize_attendance_csv(csv_file)
+
+
+# Initialize attendance record
+attendance = {}
+crypto={}
+
+
+# Set the threshold time for student presence (adjust as needed)
+presence_threshold = timedelta(seconds=1)
+absence_threshold = timedelta(seconds=5)
+attendance_recorded = set()  # Initialize the set to keep track of recorded attendance
+
+# Set the tolerance for face recognition (adjust as needed, lower values are stricter)
+tolerance = 0.3
+
+# Create a set of all class names
+all_class_names = set(class_names)
+
+while True:
+    success, img = cap.read()
+    imgS = cv2.resize(img, (0, 0), None, 0.25, 0.25)
+    imgS = cv2.cvtColor(imgS, cv2.COLOR_BGR2RGB)
+
+    facesCurFrame = face_recognition.face_locations(imgS, model="cnn")  # Use the CNN model for face detection
+    encodesCurFrame = face_recognition.face_encodings(imgS, facesCurFrame)
+
+    # Create a list to keep track of students present in the current frame
+    students_present = []
+
+    for encodeFace, faceLoc in zip(encodesCurFrame, facesCurFrame):
+        matches = face_recognition.compare_faces(encodeListKnown, encodeFace, tolerance=tolerance)
+        faceDis = face_recognition.face_distance(encodeListKnown, encodeFace)
+        matchIndex = np.argmin(faceDis)
+
+        if matches[matchIndex]:
+            student_name = class_names[matchIndex]
+            confidence = 100 - (faceDis[matchIndex] * 100)  # Calculate confidence percentage
+            students_present.append(student_name)
+
+            y1, x2, y2, x1 = faceLoc
+            y1, x2, y2, x1 = y1 * 4, x2 * 4, y2 * 4, x1 * 4
+            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.rectangle(img, (x1, y2 - 35), (x2, y2), (0, 255, 0), cv2.FILLED)
+            cv2.putText(img, f"{student_name} ({confidence:.2f}%)", (x1 + 6, y2 - 6), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 2)
+
+
+           
+            if student_name not in attendance:
+                alert_message = f"Alert: Student {student_name} has entered the class!"
+                print(alert_message)
+                        #markAttendance(student_name, csv_file, alert_message)
+                attendance[student_name] = datetime.now()
+                crypto[student_name]= datetime.now()
+            else:
+                if student_name in crypto:
+                    del crypto[student_name]
+                    print("Alert: Student", student_name, "has left the class!")
+                else:
+                    last_seen = attendance[student_name]
+                    current_time = datetime.now()
+                    time_difference = current_time - last_seen
+
+                    # Check if the student has been present for at least 10 seconds
+                    if time_difference >= presence_threshold:
+                        if student_name not in attendance_recorded:
+                            # mark_attendance(student_name, csv_dir, "PRESENT")
+                            mark_attendance(student_name, csv_file, student_ids, "PRESENT")
+                            attendance_recorded.add(student_name)
+                            
+                            print("FINAL ATTENDANCE STATUS PRESENT:", student_name)
+                        
+        else:
+            # Unknown person logic
+            y1, x2, y2, x1 = faceLoc
+            y1, x2, y2, x1 = y1 * 4, x2 * 4, y2 * 4, x1 * 4
+            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 2)  # Red rectangle
+            cv2.putText(img, "Unknown", (x1 + 6, y2 - 6), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2)
+
+   
+        for student_name, last_seen in list(attendance.items()):
+            if student_name not in students_present:
+                current_time = datetime.now()
+                time_difference = current_time - last_seen
+                if time_difference > absence_threshold:
+                    if student_name in crypto:
+                        del crypto[student_name]
+                        alert_message = f"Alert: Student {student_name} has left the class!"
+                        print(alert_message)
+                        mark_attendance(student_name, csv_dir, student_ids, alert_message)      
+                        # mark_attendance(student_name, csv_dir, alert_message)  ##updated
+                    del attendance[student_name]      
+                        
+
+
+    cv2.imshow('Webcam', img)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        # Before exiting the program, add a final attendance entry for each student
+        for student_name in crypto:
+         if student_name not in attendance_recorded: 
+            mark_attendance(student_name, csv_dir, "FINAL ATTENDANCE STATUS: ABSENT AS THE STUDENT DID NOT SPEND MINIMUM TIME IN CLASS")
+           
+        # Check for students who never entered the class and mark them as totally absent
+        totally_absent_students = all_class_names - set(attendance.keys())-set(crypto.keys())
+        for student_name in totally_absent_students:
+            #  mark_attendance(student_name, csv_dir,student_ids, "TOTALLY ABSENT") 
+             mark_attendance(student_name, csv_dir, student_ids, "TOTALLY ABSENT")
+             print("TOTALLY ABSENT :", student_name)
+        
+        # Close the CSV file
+        with open(csv_file, 'a') as f:
+            f.close()
+        
+        break
+
+# Release the webcam and close all windows
+cap.release()
+cv2.destroyAllWindows()
+print(f"File saved Check the {csv_file} ")
